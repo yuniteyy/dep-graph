@@ -21,11 +21,11 @@ class NotFoundError(RegistryError):
     """The requested package or version does not exist."""
 
 
-def download(url, timeout):
+def download(url, timeout, accept=ACCEPT):
     """Return the body of ``url``; translate failures to RegistryError."""
     try:
         request = urllib.request.Request(
-            url, headers={"Accept": ACCEPT, "User-Agent": USER_AGENT})
+            url, headers={"Accept": accept, "User-Agent": USER_AGENT})
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read()
     except urllib.error.HTTPError as exc:

@@ -1,25 +1,51 @@
 """End-to-end tests of ``main`` for parameters, output and exit codes."""
 import contextlib
 import io
+import os
+import tempfile
 import unittest
 from pathlib import Path
 
 from depgraph.app import main
+from depgraph.plantuml import PNG_SIGNATURE, RenderError
 from fake_registry import URL, fake_fetch
 
 REPOS = Path(__file__).resolve().parent.parent / "examples" / "repos"
 BASE = ["--package", "app", "--repo", URL, "--version", "1.0.0"]
 
 
-def run(argv):
-    """Run ``main``; return (code, stdout, stderr)."""
+FAKE_IMAGE = PNG_SIGNATURE + b"fake"
+
+
+def fake_render(text, jar, server):
+    """Return a fixed PNG instead of calling PlantUML."""
+    return FAKE_IMAGE
+
+
+def broken_render(text, jar, server):
+    """Fail like an unavailable renderer."""
+    raise RenderError("PlantUML недоступен")
+
+
+def run_in(folder, argv, render=fake_render):
+    """Run ``main`` writing the image into ``folder``."""
+    full = [*argv, "--output", os.path.join(folder, "g.png")]
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         try:
-            code = main(argv, fetch=fake_fetch)
+            code = main(full, fetch=fake_fetch, render=render)
         except SystemExit as exc:
             code = exc.code
     return code, out.getvalue(), err.getvalue()
+
+
+def run(argv):
+    """Run ``main`` in a temporary folder; return (code, out, err)."""
+    with tempfile.TemporaryDirectory() as folder:
+        code, out, err = run_in(folder, argv)
+    lines = [line for line in out.splitlines()
+             if not line.startswith(("Исходник PlantUML", "Изображение"))]
+    return code, "\n".join(lines) + "\n" if lines else "", err
 
 
 def run_test_repo(name, package, *extra):
@@ -211,3 +237,41 @@ class ReverseTests(unittest.TestCase):
         code, _, err = run([*BASE, "--reverse"])
         self.assertEqual(code, 2)
         self.assertIn("--reverse", err)
+
+
+class VisualizationTests(unittest.TestCase):
+    """The PlantUML source and the image are written to disk."""
+
+    def test_files_are_written(self):
+        """Both ``.puml`` and ``.png`` appear next to each other."""
+        with tempfile.TemporaryDirectory() as folder:
+            code, out, _ = run_in(folder, BASE)
+            png = Path(folder, "g.png").read_bytes()
+            puml = Path(folder, "g.puml").read_text(encoding="utf-8")
+        self.assertEqual(code, 0)
+        self.assertEqual(png, FAKE_IMAGE)
+        self.assertTrue(puml.startswith("@startuml"))
+        self.assertIn('rectangle "app@1.0.0" as n0', puml)
+        self.assertIn("g.png", out)
+
+    def test_print_puml(self):
+        """``--print-puml`` shows the diagram source on the screen."""
+        with tempfile.TemporaryDirectory() as folder:
+            _, out, _ = run_in(folder, [*BASE, "--print-puml"])
+        self.assertIn("@startuml", out)
+        self.assertIn("n0 --> n1", out)
+
+    def test_render_failure(self):
+        """A renderer error gives exit code 1 and a message."""
+        with tempfile.TemporaryDirectory() as folder:
+            code, _, err = run_in(folder, BASE, render=broken_render)
+        self.assertEqual(code, 1)
+        self.assertIn("PlantUML недоступен", err)
+
+    def test_unwritable_target(self):
+        """A file that cannot be written is reported."""
+        with tempfile.TemporaryDirectory() as folder:
+            os.mkdir(os.path.join(folder, "g.puml"))
+            code, _, err = run_in(folder, BASE)
+        self.assertEqual(code, 1)
+        self.assertIn("не удалось записать", err)

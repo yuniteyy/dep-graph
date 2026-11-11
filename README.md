@@ -23,6 +23,9 @@
 | `--output FILE.png`     | имя файла с изображением графа (по умолчанию `graph.png`) |
 | `--max-depth N`         | максимальная глубина анализа, N ≥ 1 (по умолчанию 3) |
 | `--reverse`             | обратные зависимости: пакеты, зависящие от заданного (только `--repo-mode test`) |
+| `--plantuml-jar PATH`   | локальный `plantuml.jar` для отрисовки (по умолчанию переменная `PLANTUML_JAR`) |
+| `--plantuml-server URL` | PlantUML-сервер, если jar не задан (по умолчанию `https://www.plantuml.com/plantuml`) |
+| `--print-puml`          | вывести исходный текст PlantUML на экран         |
 | `--show-config`         | вывести параметры в формате ключ-значение        |
 
 Флаг `--show-config` выводит все параметры в формате `ключ = значение`
@@ -46,6 +49,7 @@ URL (`http://`/`https://`), существование и доступность
 make run ARGS="--package express --repo https://registry.npmjs.org --version 4.18.2"
 make test         # или ./run.sh test, или run.bat test
 make lint         # flake8 (pip install flake8 pep8-naming)
+make demo         # все проверочные скрипты scripts/*.sh (нужны сеть, Java)
 ```
 
 ## Примеры использования
@@ -179,3 +183,121 @@ $ ./run.sh --repo-mode test --repo examples/repos/simple.txt --package D --rever
 
 Скрипт проверки (дерево, ромбы, глубина, циклы, ошибки):
 `scripts/stage4_reverse.sh` (или `.bat`).
+
+## Визуализация (этап 5)
+
+Граф переводится в текст на языке PlantUML и сохраняется рядом с
+изображением (`--output graph.png` даёт `graph.puml` и `graph.png`).
+Корень выделен голубым, узлы, не раскрытые из-за глубины, нарисованы
+пунктиром, рёбра циклов — красные. В режиме `--reverse` стрелки рисуются
+от зависимого пакета к тому, от которого он зависит.
+
+```
+@startuml
+title Граф зависимостей react-dom@18.2.0 (глубина не более 20)
+skinparam shadowing false
+rectangle "react-dom@18.2.0" as n0 #LightSkyBlue
+rectangle "loose-envify@1.4.0" as n1
+rectangle "scheduler@0.23.2" as n2
+rectangle "js-tokens@4.0.0" as n3
+n0 --> n1
+n0 --> n2
+n1 --> n3
+n2 --> n1
+@enduml
+```
+
+PNG строится одним из двух способов:
+
+* **локально** — `--plantuml-jar PATH` (или переменная `PLANTUML_JAR`);
+  нужны Java и Graphviz (`dot`), `plantuml.jar` скачивается с
+  <https://plantuml.com/download>. Файл jar — бинарный, в репозиторий не
+  входит (он в `.gitignore`, как и `*.png`);
+* **через сервер** — без jar текст кодируется (deflate + алфавит PlantUML,
+  стандартная библиотека `zlib`) и отправляется на `--plantuml-server`.
+  Для очень больших графов URL получается слишком длинным — тогда нужен jar.
+
+Ошибки: нет файла jar (код 2), нет Java, ошибка PlantUML, сервер
+недоступен или вернул не PNG, файл нельзя записать (код 1).
+
+```
+$ export PLANTUML_JAR=~/tools/plantuml.jar
+$ ./run.sh --package express --repo https://registry.npmjs.org --version 4.18.2 --max-depth 20 --output out/express.png
+...
+Исходник PlantUML: out/express.puml
+Изображение графа: out/express.png
+```
+
+Скрипты: `scripts/stage5_visualize.sh` — три реальных пакета, глубина,
+ромбы, цикл, обратные зависимости, ошибки; `scripts/stage5_compare.sh` —
+сравнение с npm. Сгенерированные изображения (`out/*.png`) в репозиторий
+не коммитятся.
+
+### Сравнение со штатным инструментом npm
+
+Штатный инструмент визуализации зависимостей npm — `npm ls --all`.
+Сравнение выполняет `scripts/compare_with_npm.py NAME@VERSION`: в
+пустом проекте выполняется `npm install --package-lock-only`
+(без загрузки пакетов), затем `npm ls --all --json`; множество узлов
+`имя@версия` сравнивается с графом depgraph при неограниченной глубине.
+npm используется только как эталон для сравнения, сам depgraph его не
+вызывает.
+
+| Пакет            | depgraph | npm ls | Результат                                    |
+|------------------|---------:|-------:|----------------------------------------------|
+| express@4.18.2   | 67       | 67     | совпадает полностью                          |
+| chokidar@3.5.3   | 14       | 14     | совпадает полностью                          |
+| mocha@10.2.0     | 78       | 77     | лишний `yargs-parser@20.2.9` у depgraph      |
+| react-dom@18.2.0 | 3        | 4      | у npm есть `react@18.3.1`                    |
+| jest@29.5.0      | 265      | 268    | у npm три узла `…@None` (необязательные peer)|
+
+Причины расхождений:
+
+1. **Дедупликация npm (mocha).** `mocha` зависит от `yargs-parser@20.2.4`,
+   а `yargs@16.2.0` — от `yargs-parser@^20.2.2`. npm размещает в дереве
+   одну копию `20.2.4`, удовлетворяющую обоим диапазонам (в `npm ls`
+   вторая отмечена `deduped`). depgraph разрешает каждое ребро независимо
+   и для `^20.2.2` берёт наибольшую подходящую версию `20.2.9`, поэтому
+   узлов на один больше. Рёбра при этом те же: различается лишь выбор
+   версии для общей зависимости.
+2. **Peer-зависимости (react-dom).** С npm 7 `peerDependencies` ставятся
+   автоматически, поэтому `npm ls` показывает `react@18.3.1`. depgraph по
+   заданию анализирует только `dependencies` и peer-зависимости не
+   учитывает.
+3. **Необязательные peer-зависимости (jest).** Для `node-notifier`,
+   `ts-node`, `babel-plugin-macros` (помечены `optional` в
+   `peerDependenciesMeta`) `npm ls` показывает пустые узлы без версии
+   (`@None` в нашем отчёте). Реальных пакетов за ними нет.
+4. **Прочее.** depgraph не учитывает `devDependencies`, `optionalDependencies`
+   (npm их показывает, если они установлены на текущей платформе),
+   `overrides` и `engines`. Выбор версии зависит от содержимого реестра на
+   момент запуска, поэтому на разных датах результат может отличаться.
+   npm рисует дерево (повторяющиеся поддеревья), depgraph — граф, где
+   каждый `имя@версия` присутствует один раз.
+
+Для пакетов без peer-зависимостей и общих поддеревьев с разными
+диапазонами (express, chokidar, eslint, webpack, @babel/core) графы
+совпадают узел в узел.
+
+## Структура репозитория
+
+```
+src/depgraph/     исходный код: cli, registry, semver, repository, testrepo,
+                  graph, report, plantuml, app
+tests/            модульные тесты (unittest), поддельный реестр fake_registry
+examples/repos/   тестовые репозитории и invalid/ с некорректными файлами
+scripts/          скрипты реальной ОС (.sh и .bat) для проверки этапов,
+                  compare_with_npm.py — сравнение с npm
+Makefile, run.sh, run.bat   запуск, тесты, линтер
+```
+
+Тесты не требуют сети: реестр заменяется поддельным, а HTTP-слой
+проверяется на локальном сервере. Тест настоящего рендера PlantUML
+выполняется, если задан `PLANTUML_JAR` и установлена Java.
+
+## Качество кода
+
+Настройки `flake8` в `.flake8`: строки до 80 символов, цикломатическая
+сложность не более 10. Функции короче 40 строк, не более 7 аргументов,
+документация оформлена docstring, магические числа вынесены в
+именованные константы, имена соответствуют PEP 8 (`pep8-naming`).

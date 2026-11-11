@@ -13,6 +13,8 @@ DEFAULT_MAX_DEPTH = 3
 MIN_DEPTH = 1
 MAX_NAME_LENGTH = 214
 OUTPUT_SUFFIX = ".png"
+DEFAULT_SERVER = "https://www.plantuml.com/plantuml"
+JAR_ENV = "PLANTUML_JAR"
 HTTP_SCHEMES = ("http", "https")
 NPM_NAME = re.compile(
     r"(@[a-z0-9~-][a-z0-9._~-]*/)?[a-z0-9~-][a-z0-9._~-]*")
@@ -38,13 +40,13 @@ class Config:
     max_depth: int = DEFAULT_MAX_DEPTH
     show_config: bool = False
     reverse: bool = False
+    plantuml_jar: str = None
+    plantuml_server: str = DEFAULT_SERVER
+    print_puml: bool = False
 
 
-def build_parser():
-    """Create the argument parser of the tool."""
-    parser = argparse.ArgumentParser(
-        prog="depgraph",
-        description="Visualizer of npm package dependency graphs.")
+def _add_analysis_options(parser):
+    """Add the options that select what is analysed."""
     parser.add_argument(
         "--package", required=True, metavar="NAME",
         help="name of the analysed package")
@@ -58,18 +60,42 @@ def build_parser():
         "--version", metavar="X.Y.Z",
         help="exact package version (required in remote mode)")
     parser.add_argument(
-        "--output", default=DEFAULT_OUTPUT, metavar="FILE.png",
-        help="name of the generated image file (default: %(default)s)")
-    parser.add_argument(
         "--max-depth", default=str(DEFAULT_MAX_DEPTH), metavar="N",
         help="maximum depth of dependency analysis (default: %(default)s)")
     parser.add_argument(
         "--reverse", action="store_true",
         help="show reverse dependencies: packages that depend on the "
              "given one (test repository only)")
+
+
+def _add_output_options(parser):
+    """Add the options of the visualization and diagnostics."""
+    parser.add_argument(
+        "--output", default=DEFAULT_OUTPUT, metavar="FILE.png",
+        help="name of the generated image file (default: %(default)s)")
+    parser.add_argument(
+        "--plantuml-jar", metavar="PATH", default=os.environ.get(JAR_ENV),
+        help="local plantuml.jar used for rendering (default: env "
+             f"{JAR_ENV}); without it a PlantUML server is used")
+    parser.add_argument(
+        "--plantuml-server", metavar="URL", default=DEFAULT_SERVER,
+        help="PlantUML server used when no jar is given "
+             "(default: %(default)s)")
+    parser.add_argument(
+        "--print-puml", action="store_true",
+        help="print the PlantUML source of the graph")
     parser.add_argument(
         "--show-config", action="store_true",
         help="print all parameters as key = value before the analysis")
+
+
+def build_parser():
+    """Create the argument parser of the tool."""
+    parser = argparse.ArgumentParser(
+        prog="depgraph",
+        description="Visualizer of npm package dependency graphs.")
+    _add_analysis_options(parser)
+    _add_output_options(parser)
     return parser
 
 
@@ -88,12 +114,24 @@ def check_package(package, mode):
         raise ConfigError(f"недопустимое имя npm-пакета '{package}'")
 
 
-def check_remote_repo(repo):
-    """Validate that ``repo`` is an http(s) URL with a host name."""
-    parts = urlparse(repo)
+def check_url(url, what):
+    """Validate that ``url`` is an http(s) URL with a host name."""
+    parts = urlparse(url)
     if parts.scheme not in HTTP_SCHEMES or not parts.netloc:
         raise ConfigError(
-            f"'{repo}' не является URL репозитория (http:// или https://)")
+            f"'{url}' не является URL {what} (http:// или https://)")
+
+
+def check_remote_repo(repo):
+    """Validate that ``repo`` is the URL of a registry."""
+    check_url(repo, "репозитория")
+
+
+def check_renderer(jar, server):
+    """Validate the PlantUML jar path and the server URL."""
+    if jar and not os.path.isfile(jar):
+        raise ConfigError(f"файл plantuml.jar не найден: {jar}")
+    check_url(server, "PlantUML-сервера")
 
 
 def check_test_repo(path):
@@ -174,11 +212,15 @@ def parse_args(argv=None):
     check_version(values.version, mode)
     check_output(values.output)
     check_reverse(values.reverse, mode)
+    check_renderer(values.plantuml_jar, values.plantuml_server)
     return Config(
         package=values.package, repo=values.repo, repo_mode=mode,
         version=values.version, output=values.output,
         max_depth=parse_depth(values.max_depth),
-        show_config=values.show_config, reverse=values.reverse)
+        show_config=values.show_config, reverse=values.reverse,
+        plantuml_jar=values.plantuml_jar,
+        plantuml_server=values.plantuml_server,
+        print_puml=values.print_puml)
 
 
 def format_config(config):
@@ -191,4 +233,6 @@ def format_config(config):
         f"output    = {config.output}",
         f"max_depth = {config.max_depth}",
         f"reverse   = {config.reverse}",
+        f"plantuml_jar    = {config.plantuml_jar}",
+        f"plantuml_server = {config.plantuml_server}",
     ]
