@@ -9,7 +9,7 @@ mkdir -p out/dir.png
 
 try() {
     echo "--- $*"
-    "$RUN" "$@"
+    "$RUN" --show-config "$@"
     echo "код возврата: $?"
 }
 

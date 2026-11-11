@@ -36,6 +36,7 @@ class Config:
     version: str = None
     output: str = DEFAULT_OUTPUT
     max_depth: int = DEFAULT_MAX_DEPTH
+    show_config: bool = False
 
 
 def build_parser():
@@ -61,6 +62,9 @@ def build_parser():
     parser.add_argument(
         "--max-depth", default=str(DEFAULT_MAX_DEPTH), metavar="N",
         help="maximum depth of dependency analysis (default: %(default)s)")
+    parser.add_argument(
+        "--show-config", action="store_true",
+        help="print all parameters as key = value before the analysis")
     return parser
 
 
@@ -158,7 +162,8 @@ def parse_args(argv=None):
     return Config(
         package=values.package, repo=values.repo, repo_mode=mode,
         version=values.version, output=values.output,
-        max_depth=parse_depth(values.max_depth))
+        max_depth=parse_depth(values.max_depth),
+        show_config=values.show_config)
 
 
 def format_config(config):
