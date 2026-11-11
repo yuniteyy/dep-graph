@@ -150,3 +150,64 @@ class ConfigErrorTests(unittest.TestCase):
         code, _, err = run(["--package", "app"])
         self.assertEqual(code, 2)
         self.assertIn("--repo", err)
+
+
+class ReverseTests(unittest.TestCase):
+    """Reverse dependencies in the test repository mode."""
+
+    def test_transitive_dependents(self):
+        """Dependents are found level by level with the same BFS."""
+        code, out, _ = run_test_repo("simple.txt", "D", "--reverse")
+        self.assertEqual(code, 0)
+        self.assertEqual(out.splitlines(), [
+            "Обратные зависимости D (максимальная глубина 3)",
+            "Узлов: 4, рёбер: 4",
+            "  D [0] <- B, C",
+            "  B [1] <- A",
+            "  C [1] <- A",
+            "  A [2] <- (нет)"])
+
+    def test_depth_one_gives_direct_dependents(self):
+        """Depth 1 lists only the packages depending on the given one."""
+        _, out, _ = run_test_repo("wide.txt", "K", "--reverse",
+                                  "--max-depth", "1")
+        self.assertIn("  K [0] <- G, H", out)
+        self.assertNotIn("A [", out)
+
+    def test_package_without_dependents(self):
+        """The root of the graph has no dependents."""
+        _, out, _ = run_test_repo("simple.txt", "A", "--reverse")
+        self.assertIn("  A [0] <- (нет)", out)
+        self.assertIn("Узлов: 1,", out)
+
+    def test_leaf_with_many_dependents(self):
+        """Every transitive dependent of a leaf is listed once."""
+        _, out, _ = run_test_repo("wide.txt", "M", "--reverse",
+                                  "--max-depth", "20")
+        self.assertIn("Узлов: 11,", out)
+        self.assertIn("  M [0] <- L", out)
+
+    def test_cycles(self):
+        """Cycles of the inverted graph terminate and are reported."""
+        _, out, _ = run_test_repo("cycle.txt", "A", "--reverse",
+                                  "--max-depth", "10")
+        self.assertIn("Циклические зависимости (1):", out)
+        self.assertIn("A <- C <- B <- A", out)
+
+    def test_self_loop(self):
+        """A self-dependent package is its own dependent."""
+        _, out, _ = run_test_repo("self_loop.txt", "B", "--reverse")
+        self.assertIn("  B [0] <- A", out)
+        self.assertIn("  A [1] <- A", out)
+
+    def test_unknown_package(self):
+        """A package missing from the file is an error."""
+        code, _, err = run_test_repo("simple.txt", "Q", "--reverse")
+        self.assertEqual(code, 1)
+        self.assertIn("не найден", err)
+
+    def test_not_available_for_remote_registry(self):
+        """Reverse mode is rejected for the real registry."""
+        code, _, err = run([*BASE, "--reverse"])
+        self.assertEqual(code, 2)
+        self.assertIn("--reverse", err)

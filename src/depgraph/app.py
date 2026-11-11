@@ -14,14 +14,19 @@ EXIT_ERROR = 1
 EXIT_CONFIG = 2
 
 
+def open_test_repo(config):
+    """Return the test repository (inverted in reverse mode)."""
+    repo = FileRepository.load(config.repo)
+    if not repo.has(config.package):
+        raise TestRepoError(
+            f"пакет '{config.package}' не найден в тестовом репозитории")
+    return repo.reversed() if config.reverse else repo
+
+
 def open_source(config, fetch):
     """Return ``(repository, root node)`` for the configured source."""
     if config.repo_mode == MODE_TEST:
-        repo = FileRepository.load(config.repo)
-        if not repo.has(config.package):
-            raise TestRepoError(
-                f"пакет '{config.package}' не найден в тестовом репозитории")
-        return repo, config.package
+        return open_test_repo(config), config.package
     repo = NpmRepository(NpmRegistry(config.repo, fetch))
     return repo, repo.root(config.package, config.version)
 
@@ -30,8 +35,10 @@ def analyse(config, fetch):
     """Build the dependency graph and print its report."""
     repo, root = open_source(config, fetch)
     graph = build_graph(repo, root, config.max_depth)
-    title = f"Граф зависимостей {root}"
-    print("\n".join(format_graph(graph, config.max_depth, title)))
+    kind = "Обратные зависимости" if config.reverse else "Граф зависимостей"
+    lines = format_graph(graph, config.max_depth, f"{kind} {root}",
+                         config.reverse)
+    print("\n".join(lines))
     for warning in repo.warnings:
         print(f"предупреждение: {warning}", file=sys.stderr)
     return graph

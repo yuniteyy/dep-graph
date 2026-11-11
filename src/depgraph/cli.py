@@ -37,6 +37,7 @@ class Config:
     output: str = DEFAULT_OUTPUT
     max_depth: int = DEFAULT_MAX_DEPTH
     show_config: bool = False
+    reverse: bool = False
 
 
 def build_parser():
@@ -62,6 +63,10 @@ def build_parser():
     parser.add_argument(
         "--max-depth", default=str(DEFAULT_MAX_DEPTH), metavar="N",
         help="maximum depth of dependency analysis (default: %(default)s)")
+    parser.add_argument(
+        "--reverse", action="store_true",
+        help="show reverse dependencies: packages that depend on the "
+             "given one (test repository only)")
     parser.add_argument(
         "--show-config", action="store_true",
         help="print all parameters as key = value before the analysis")
@@ -120,6 +125,15 @@ def check_version(version, mode):
             f"версия '{version}' не соответствует формату X.Y.Z")
 
 
+def check_reverse(reverse, mode):
+    """Reverse dependencies need the whole repository, i.e. a test file."""
+    if reverse and mode != MODE_TEST:
+        raise ConfigError(
+            "режим --reverse поддерживается только для тестового "
+            "репозитория (--repo-mode test): реестр npm не позволяет "
+            "найти все пакеты, зависящие от заданного")
+
+
 def check_output(output):
     """Validate the name of the image file."""
     if not output.lower().endswith(OUTPUT_SUFFIX):
@@ -159,11 +173,12 @@ def parse_args(argv=None):
     check_repo(values.repo, mode)
     check_version(values.version, mode)
     check_output(values.output)
+    check_reverse(values.reverse, mode)
     return Config(
         package=values.package, repo=values.repo, repo_mode=mode,
         version=values.version, output=values.output,
         max_depth=parse_depth(values.max_depth),
-        show_config=values.show_config)
+        show_config=values.show_config, reverse=values.reverse)
 
 
 def format_config(config):
@@ -175,4 +190,5 @@ def format_config(config):
         f"version   = {config.version}",
         f"output    = {config.output}",
         f"max_depth = {config.max_depth}",
+        f"reverse   = {config.reverse}",
     ]
