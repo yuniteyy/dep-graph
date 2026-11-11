@@ -2,24 +2,39 @@
 import sys
 
 from .cli import MODE_TEST, ConfigError, format_config, parse_args
-from .registry import NpmRegistry, RegistryError, fetch_json
+from .errors import ToolError
+from .graph import build_graph
+from .registry import NpmRegistry, fetch_json
+from .report import format_graph
+from .repository import NpmRepository
+from .testrepo import FileRepository, TestRepoError
 
 EXIT_OK = 0
 EXIT_ERROR = 1
 EXIT_CONFIG = 2
 
 
-def show_direct_dependencies(config, fetch):
-    """Print the direct dependencies of the requested package version."""
+def open_source(config, fetch):
+    """Return ``(repository, root node)`` for the configured source."""
     if config.repo_mode == MODE_TEST:
-        raise RegistryError("тестовый режим будет доступен на этапе 3")
-    registry = NpmRegistry(config.repo, fetch)
-    deps = registry.direct_dependencies(config.package, config.version)
-    print(f"Прямые зависимости {config.package}@{config.version}:")
-    for name, spec in sorted(deps.items()):
-        print(f"  {name}: {spec}")
-    if not deps:
-        print("  (нет зависимостей)")
+        repo = FileRepository.load(config.repo)
+        if not repo.has(config.package):
+            raise TestRepoError(
+                f"пакет '{config.package}' не найден в тестовом репозитории")
+        return repo, config.package
+    repo = NpmRepository(NpmRegistry(config.repo, fetch))
+    return repo, repo.root(config.package, config.version)
+
+
+def analyse(config, fetch):
+    """Build the dependency graph and print its report."""
+    repo, root = open_source(config, fetch)
+    graph = build_graph(repo, root, config.max_depth)
+    title = f"Граф зависимостей {root}"
+    print("\n".join(format_graph(graph, config.max_depth, title)))
+    for warning in repo.warnings:
+        print(f"предупреждение: {warning}", file=sys.stderr)
+    return graph
 
 
 def main(argv=None, fetch=fetch_json):
@@ -35,8 +50,8 @@ def main(argv=None, fetch=fetch_json):
     if config.show_config:
         print("\n".join(format_config(config)))
     try:
-        show_direct_dependencies(config, fetch)
-    except RegistryError as exc:
+        analyse(config, fetch)
+    except ToolError as exc:
         print(f"ошибка: {exc}", file=sys.stderr)
         return EXIT_ERROR
     return EXIT_OK

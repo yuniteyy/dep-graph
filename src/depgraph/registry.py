@@ -4,6 +4,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import quote
 
+from .errors import ToolError
+
 ACCEPT = ("application/vnd.npm.install-v1+json; q=1.0, "
           "application/json; q=0.8")
 USER_AGENT = "depgraph/0.1"
@@ -11,7 +13,7 @@ TIMEOUT_SECONDS = 30
 HTTP_NOT_FOUND = 404
 
 
-class RegistryError(Exception):
+class RegistryError(ToolError):
     """The registry cannot be queried or returned unusable data."""
 
 
